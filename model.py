@@ -20,7 +20,7 @@ def get_model(params):
     model.add(Dropout(dropout_rate))
     
     model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.compile(optimizer=optimizer, loss=loss)
 
     model.summary()
 

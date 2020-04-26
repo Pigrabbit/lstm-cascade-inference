@@ -1,3 +1,5 @@
+from absl import app
+from absl import flags
 import random
 import numpy as np
 import pandas as pd
@@ -9,30 +11,39 @@ import model
 from os.path import dirname, join as pjoin
 from datetime import datetime
 
-DATA_PATH = 'data'   
-DATA_FILE_NAME = 'Brugge_en_d.mat'
+FLAGS = flags.FLAGS
 
-NUM_MODEL = 104
-TRAIN_SPLIT = 90
-BATCH_SIZE = 32
-BUFFER_SIZE = 10000
-EPOCHS = 20
+flags.DEFINE_string("DATA_PATH", "data", "directory which has dataset")
+flags.DEFINE_string("DATA_FILE_NAME", "Brugge_en_d.mat", "filename of dataset")
+flags.DEFINE_integer("NUM_MODEL", 104, "number of equivalent models for single well")
+flags.DEFINE_integer("NUM_WELL", 20, "number of well included in Brugge Oil Field")
+flags.DEFINE_integer("TRAIN_SPLIT", 90, "number of model used for training")
+flags.DEFINE_integer("BATCH_SIZE", 32, "batch size for training")
+flags.DEFINE_integer("BUFFER_SIZE", 10000, "buffer size for training")
+flags.DEFINE_integer("EPOCHS", 20, "epoch for training")
+flags.DEFINE_integer("TRUE_MODEL", 103, "select ground truth of certain well")
 
-TRUE_MODEL = 103
-TARGET_WELL = '9'
-OBSERVATION_DATE = 150
-INFERENCE_GAUSSIAN_STD = 0.01
+flags.DEFINE_string("TARGET_WELL", "9", "well index to train and inference")
+flags.DEFINE_integer("OBSERVATION_DATE", 150, "begin cascade inference from this date")
+flags.DEFINE_float("INFERENCE_GAUSSIAN_STD", 0.01, "Gaussian std used for cascade inference")
 
-IMG_PATH = f"img\well_{TARGET_WELL}"
-LOG_PATH = f"logs\well_{TARGET_WELL}"
-RESULT_PATH = f"result\well_{TARGET_WELL}"
+
+def _get_img_path():
+    return pjoin("img", f"well_{FLAGS.TARGET_WELL}")
+
+def _get_log_path():
+    return pjoin("logs", f"well_{FLAGS.TARGET_WELL}")
+
+def _get_result_path():
+    return pjoin("result", f"well_{FLAGS.TARGET_WELL}")
+
 
 def split_train(test_model):
-    model_list = list(range(NUM_MODEL))
+    model_list = list(range(FLAGS.NUM_MODEL))
     train = []
     test = [test_model]
     model_list.remove(test_model)
-    for i in range(TRAIN_SPLIT):
+    for i in range(FLAGS.TRAIN_SPLIT):
         chosen = random.choice(model_list)
         train.append(chosen)
         model_list.remove(chosen)
@@ -46,7 +57,7 @@ def save_train_history(history, title):
     epochs = range(len(loss))
 
     fig_extension = "png"
-    img_dir = pjoin(IMG_PATH, "history." + fig_extension)
+    img_dir = pjoin(_get_img_path(), "history." + fig_extension)
     fig = plt.figure()
     plt.plot(epochs, loss, 'b', label='Training loss')
     plt.plot(epochs, val_loss, 'r', label='Validation loss')
@@ -58,7 +69,7 @@ def save_train_history(history, title):
 
 def save_prediction(predicted, true, title, timestamp):
     fig_extension = "png"
-    img_dir = pjoin(IMG_PATH, f"true{TRUE_MODEL}_{timestamp}_prediction." + fig_extension)
+    img_dir = pjoin(_get_img_path(), f"true{FLAGS.TRUE_MODEL}_{timestamp}_prediction." + fig_extension)
     fig = plt.figure()
     plt.plot(predicted, label='prediction')
     plt.plot(true, label='true')
@@ -98,19 +109,20 @@ def cascade_inference(model, test_x, test_y, obs, gaussian_std):
 
     return y_hat_list
 
-if __name__ == "__main__" :
+def main(argv=None):
     random.seed(7)
 
-    data_dir = pjoin(DATA_PATH, DATA_FILE_NAME)
-    well_dic = reader.read_dataset(data_dir)
+    data_dir = pjoin(FLAGS.DATA_PATH, FLAGS.DATA_FILE_NAME)
+    well_dic = reader.read_dataset(data_dir, FLAGS.NUM_WELL, FLAGS.NUM_MODEL)
 
     # choose a well to learn
-    well = well_dic[TARGET_WELL]
+    well = well_dic[FLAGS.TARGET_WELL]
     processor.remove_zero_wopr(well)
+
     serialized_well, end_indice, min_list, scale_list = processor.serialize_well_df(well)
     print(serialized_well.shape)
 
-    train_model_list, val_model_list, test_model_list = split_train(TRUE_MODEL)
+    train_model_list, val_model_list, test_model_list = split_train(FLAGS.TRUE_MODEL)
     print(f"train model list: {train_model_list}")
     print(f"validation model list: {val_model_list}")
     print(f"test model list: {test_model_list}")
@@ -120,11 +132,11 @@ if __name__ == "__main__" :
     test_x, test_y = processor.get_dataset(serialized_well, test_model_list, end_indice)
 
     train_data = tf.data.Dataset.from_tensor_slices((train_x, train_y))
-    train_data = train_data.cache().shuffle(BUFFER_SIZE).batch(BATCH_SIZE).repeat()
+    train_data = train_data.cache().shuffle(FLAGS.BUFFER_SIZE).batch(FLAGS.BATCH_SIZE).repeat()
     train_data = train_data.prefetch(1)
 
     val_data = tf.data.Dataset.from_tensor_slices((val_x, val_y))
-    val_data = val_data.batch(BATCH_SIZE).repeat()
+    val_data = val_data.batch(FLAGS.BATCH_SIZE).repeat()
 
     lstm_model = model.get_model(params = {
         "input_shape": train_x.shape[-2:],
@@ -139,12 +151,12 @@ if __name__ == "__main__" :
     es = tf.keras.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=6, verbose=1)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     # logdir = pjoin(LOG_PATH, 'scalars', timestamp)
-    logdir = pjoin(LOG_PATH, 'scalars')
+    logdir = pjoin(_get_log_path(), 'scalars')
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=logdir)
-    checkpoint_path = pjoin(LOG_PATH, "model.ckpt-{epoch:04d}")
+    checkpoint_path = pjoin(_get_log_path(), "model.ckpt-{epoch:04d}")
     checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path, save_weights_only=True, verbose=1)
 
-    latest = tf.train.latest_checkpoint(LOG_PATH)
+    latest = tf.train.latest_checkpoint(_get_log_path())
     print(f"latest checkpoint: {latest}")
     if latest != None:
         print("Restoring trained weights")
@@ -152,11 +164,11 @@ if __name__ == "__main__" :
     else:
         history = lstm_model.fit(
             train_data,
-            epochs = EPOCHS,
-            steps_per_epoch = train_y.shape[0]//BATCH_SIZE,
+            epochs = FLAGS.EPOCHS,
+            steps_per_epoch = train_y.shape[0]//FLAGS.BATCH_SIZE,
             # steps_per_epoch = 160 // BATCH_SIZE,
             validation_data = val_data,
-            validation_steps = val_y.shape[0]//BATCH_SIZE,
+            validation_steps = val_y.shape[0]//FLAGS.BATCH_SIZE,
             use_multiprocessing = True,
             workers = 8,
             callbacks = [es, tensorboard_callback]
@@ -164,17 +176,26 @@ if __name__ == "__main__" :
         )
         print("training has been ended")
 
-        lstm_model.save_weights(checkpoint_path.format(epoch=EPOCHS))
+        lstm_model.save_weights(checkpoint_path.format(epoch=FLAGS.EPOCHS))
         print("model weights are saved")
-        np.save(pjoin(RESULT_PATH, f"ground_truth_{timestamp}.npy"), test_y)
+        np.save(pjoin(_get_result_path(), f"ground_truth_{timestamp}.npy"), test_y)
         print("Ground Truth is saved...")
         # save_train_history(history, 'Training and validation loss')
 
     ## Inference
-    y_hat_list = cascade_inference(lstm_model, test_x, test_y, obs=OBSERVATION_DATE, gaussian_std=INFERENCE_GAUSSIAN_STD)
+    y_hat_list = cascade_inference(
+        lstm_model,
+        test_x,
+        test_y,
+        obs=FLAGS.OBSERVATION_DATE,
+        gaussian_std=FLAGS.INFERENCE_GAUSSIAN_STD
+    )
     # print(len(y_hat_list))
     # print(test_y.shape)
     print("Saving inference results...")
-    np.save(pjoin(RESULT_PATH, f"inference_result_{timestamp}.npy"), y_hat_list)
+    np.save(pjoin(_get_result_path(), f"inference_result_{timestamp}.npy"), y_hat_list)
     print("Saving prediction graph...")
-    save_prediction(y_hat_list, test_y, f"Prediction {TARGET_WELL}, true model: {TRUE_MODEL}", timestamp)
+    save_prediction(y_hat_list, test_y, f"Prediction {FLAGS.TARGET_WELL}, true model: {FLAGS.TRUE_MODEL}", timestamp)
+
+if __name__ == "__main__" :
+    app.run(main)
