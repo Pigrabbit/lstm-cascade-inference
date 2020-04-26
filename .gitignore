@@ -1,0 +1,14 @@
+*.swp
+
+*.txt
+*.mat
+*.png
+.env/*
+
+*.pyc
+*.ipynb_checkpoints
+
+/.idea
+/logs
+/result
+
